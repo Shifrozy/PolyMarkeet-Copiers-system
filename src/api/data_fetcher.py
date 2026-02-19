@@ -320,7 +320,8 @@ class DataFetcher:
                         avg_price = float(pw_avg)
                         
                         # ─── Outcome-to-Price Mapping ───
-                        current_price = float(pos_data.get("currentPrice") or pos_data.get("price") or 0)
+                        # NOTE: Polymarket API uses "curPrice" not "currentPrice"
+                        current_price = float(pos_data.get("curPrice") or pos_data.get("currentPrice") or pos_data.get("price") or 0)
                         
                         if market_info:
                             # Use outcome-specific prices if available

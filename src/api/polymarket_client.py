@@ -29,6 +29,24 @@ CTF_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982e"
 NEG_RISK_CTF_EXCHANGE = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
 # USDC on Polygon
 USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+# Conditional Tokens Framework contract on Polygon
+CTF_CONTRACT = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+
+# Minimal ABI for CTF redeemPositions
+CTF_REDEEM_ABI = [
+    {
+        "inputs": [
+            {"name": "collateralToken", "type": "address"},
+            {"name": "parentCollectionId", "type": "bytes32"},
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "indexSets", "type": "uint256[]"}
+        ],
+        "name": "redeemPositions",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
+]
 
 
 class Side(Enum):
@@ -93,10 +111,24 @@ class PolymarketClient:
                 self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
                 
             # Connect to Polygon RPC
-            self._web3 = Web3(Web3.HTTPProvider(self.settings.rpc_url))
-            if not self._web3.is_connected():
-                logger.warning("⚠️ Could not connect to Polygon RPC, trying fallback...")
-                self._web3 = Web3(Web3.HTTPProvider("https://polygon-rpc.com"))
+            rpc_urls = [
+                self.settings.rpc_url,
+                "https://polygon-bor-rpc.publicnode.com",
+                "https://polygon.llamarpc.com",
+                "https://rpc.ankr.com/polygon",
+                "https://polygon-rpc.com",
+            ]
+            
+            for rpc_url in rpc_urls:
+                try:
+                    self._web3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 5}))
+                    if self._web3.is_connected():
+                        logger.info(f"✅ Connected to Polygon RPC: {rpc_url[:40]}...")
+                        break
+                except Exception:
+                    continue
+            else:
+                logger.warning("⚠️ Could not connect to any Polygon RPC!")
             
             # Derive wallet from private key
             pk = self.settings.private_key
@@ -640,6 +672,80 @@ class PolymarketClient:
             "POLY_API_PASSPHRASE": self.settings.api_passphrase
         }
     
+    async def redeem_position(self, condition_id: str) -> Dict[str, Any]:
+        """
+        Redeem a resolved winning position via the CTF smart contract.
+        
+        Args:
+            condition_id: The conditionId of the resolved market.
+        
+        Returns:
+            {"success": bool, "tx_hash": str, "error": str}
+        """
+        if not self._web3 or not self._account:
+            return {"success": False, "error": "Web3 or account not initialized"}
+        
+        try:
+            ctf_address = Web3.to_checksum_address(CTF_CONTRACT)
+            usdc_address = Web3.to_checksum_address(USDC_ADDRESS)
+            wallet = Web3.to_checksum_address(self._wallet_address)
+            
+            # Build the CTF contract
+            ctf_contract = self._web3.eth.contract(
+                address=ctf_address,
+                abi=CTF_REDEEM_ABI
+            )
+            
+            # parentCollectionId is always bytes32(0) for Polymarket
+            parent_collection = b'\x00' * 32
+            
+            # conditionId as bytes32
+            if condition_id.startswith("0x"):
+                cond_bytes = bytes.fromhex(condition_id[2:])
+            else:
+                cond_bytes = bytes.fromhex(condition_id)
+            
+            # Index sets: [1, 2] for binary markets (Yes=1, No=2)
+            index_sets = [1, 2]
+            
+            # Build transaction
+            tx = ctf_contract.functions.redeemPositions(
+                usdc_address,
+                parent_collection,
+                cond_bytes,
+                index_sets
+            ).build_transaction({
+                'from': wallet,
+                'nonce': self._web3.eth.get_transaction_count(wallet),
+                'gas': 200000,
+                'gasPrice': self._web3.eth.gas_price,
+                'chainId': CHAIN_ID,
+            })
+            
+            # Sign and send
+            pk = self.settings.private_key
+            if pk.startswith("0x"):
+                pk = pk[2:]
+            
+            signed = self._web3.eth.account.sign_transaction(tx, pk)
+            # web3.py v6+ uses raw_transaction, older uses rawTransaction
+            raw_tx = getattr(signed, 'raw_transaction', None) or getattr(signed, 'rawTransaction', None)
+            tx_hash = self._web3.eth.send_raw_transaction(raw_tx)
+            
+            # Wait for receipt
+            receipt = self._web3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+            
+            if receipt.status == 1:
+                logger.info(f"✅ Redeemed! TX: {tx_hash.hex()}")
+                return {"success": True, "tx_hash": tx_hash.hex()}
+            else:
+                logger.error(f"❌ Redeem TX failed: {tx_hash.hex()}")
+                return {"success": False, "tx_hash": tx_hash.hex(), "error": "Transaction reverted"}
+                
+        except Exception as e:
+            logger.error(f"❌ Redeem error: {e}")
+            return {"success": False, "error": str(e)}
+
     @property
     def wallet_address(self) -> Optional[str]:
         """Get the connected wallet address."""

@@ -141,6 +141,7 @@ class Dashboard(ctk.CTk):
             "target": {},
             "user": {}
         }
+        self._redeemable_positions = []
         
         # Build UI
         self._create_layout()
@@ -263,6 +264,12 @@ class Dashboard(ctk.CTk):
         )
         self.stop_btn.pack(side="left", padx=(0, SPACING["sm"]), pady=SPACING["md"])
         self.stop_btn.configure(state="disabled")
+        
+        self.redeem_btn = ActionButton(
+            right, text="🎁 Redeem", variant="success", icon="",
+            command=self._on_redeem_all, width=110
+        )
+        self.redeem_btn.pack(side="left", padx=(0, SPACING["sm"]), pady=SPACING["md"])
         
         settings_btn = ActionButton(
             right, text="⚙️", variant="secondary", width=40,
@@ -388,6 +395,28 @@ class Dashboard(ctk.CTk):
         
         self.user_volume_stat = StatCard(stats_frame, label="Copy Volume", value="$0", icon="💵")
         self.user_volume_stat.pack(side="left", fill="x", expand=True)
+        
+        # ─── Redeem Info Row ───
+        redeem_frame = ctk.CTkFrame(panel, fg_color=COLORS["bg_secondary"], corner_radius=RADIUS["md"])
+        redeem_frame.pack(fill="x", pady=(0, SPACING["sm"]))
+        
+        redeem_inner = ctk.CTkFrame(redeem_frame, fg_color="transparent")
+        redeem_inner.pack(fill="x", padx=SPACING["md"], pady=SPACING["sm"])
+        
+        ctk.CTkLabel(
+            redeem_inner,
+            text="💎 Redeemable:",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_secondary"]
+        ).pack(side="left")
+        
+        self.redeem_amount_label = ctk.CTkLabel(
+            redeem_inner,
+            text="$0.00",
+            font=FONTS["body_bold"],
+            text_color=COLORS["chart_green"]
+        )
+        self.redeem_amount_label.pack(side="left", padx=(SPACING["sm"], 0))
         
         # Positions section
         positions_card = GlassCard(panel, title="Your Positions")
@@ -537,6 +566,64 @@ class Dashboard(ctk.CTk):
         """Handle settings button click."""
         self._show_settings_dialog()
     
+    def _on_redeem_all(self):
+        """Handle redeem all button click."""
+        if not self._redeemable_positions:
+            logger.info("ℹ️ No redeemable positions found.")
+            return
+        
+        self.redeem_btn.configure(state="disabled", text="⏳ Redeeming...")
+        positions_to_redeem = list(self._redeemable_positions)
+        
+        logger.info(f"🎁 Starting redemption of {len(positions_to_redeem)} positions...")
+        
+        def run_redeem():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                from src.api.polymarket_client import PolymarketClient
+                client = PolymarketClient()
+                loop.run_until_complete(client.initialize())
+                
+                balance_before = loop.run_until_complete(client.get_balance())
+                success = 0
+                failed = 0
+                
+                for pos in positions_to_redeem:
+                    condition_id = pos.market_id
+                    logger.info(f"🔄 Redeeming: {pos.market_question[:40]}... ({pos.size:.1f} shares)")
+                    
+                    result = loop.run_until_complete(client.redeem_position(condition_id))
+                    
+                    if result.get("success"):
+                        logger.info(f"✅ Redeemed! TX: {result['tx_hash'][:16]}...")
+                        success += 1
+                    else:
+                        logger.error(f"❌ Failed: {result.get('error', 'Unknown')}")
+                        failed += 1
+                
+                import time
+                time.sleep(3)
+                balance_after = loop.run_until_complete(client.get_balance())
+                
+                recovered = balance_after - balance_before
+                logger.info(f"🏁 Redemption complete! ✅ {success} | ❌ {failed} | 💵 +${recovered:.2f}")
+                
+                # Update balance on UI
+                self._update_queue.put(("balance_update", balance_after))
+                
+            except Exception as e:
+                logger.error(f"❌ Redeem error: {e}")
+            finally:
+                loop.close()
+                # Re-enable button
+                self.after(100, lambda: self.redeem_btn.configure(
+                    state="normal", text="🎁 Redeem All"
+                ))
+        
+        threading.Thread(target=run_redeem, daemon=True).start()
+    
     def _on_copy_event(self, data):
         """Handle copy trade event or stats update from engine."""
         if isinstance(data, tuple):
@@ -650,6 +737,30 @@ class Dashboard(ctk.CTk):
         """Update user wallet statistics display."""
         self.user_pnl.update(stats.total_pnl, stats.pnl_percentage)
         self._update_positions_display("user", self.user_positions_container, stats.positions)
+        
+        # Calculate redeemable amount (positions with current_price >= 0.95 are resolved winners)
+        redeemable_positions = [
+            p for p in stats.positions 
+            if p.current_price >= 0.95 and p.size > 0
+        ]
+        redeemable_value = sum(p.size * p.current_price for p in redeemable_positions)
+        
+        # Store for redeem button
+        self._redeemable_positions = redeemable_positions
+        
+        # Update UI
+        if redeemable_value > 0:
+            self.redeem_amount_label.configure(
+                text=f"${redeemable_value:.2f}",
+                text_color=COLORS["chart_green"]
+            )
+            self.redeem_btn.configure(state="normal")
+        else:
+            self.redeem_amount_label.configure(
+                text="$0.00",
+                text_color=COLORS["text_muted"]
+            )
+            self.redeem_btn.configure(state="disabled")
     
     def _update_positions_display(self, panel_id: str, container: ctk.CTkScrollableFrame, positions: list):
         """Update positions display without flickering."""
