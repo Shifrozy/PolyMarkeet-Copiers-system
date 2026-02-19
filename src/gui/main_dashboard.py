@@ -124,6 +124,7 @@ class Dashboard(ctk.CTk):
         self.title("🚀 PolyBot - Copy Trader")
         self.geometry("1200x900")
         self.minsize(1000, 700)
+        self.resizable(True, True)
         
         # Theme
         ctk.set_appearance_mode("dark")
@@ -394,29 +395,13 @@ class Dashboard(ctk.CTk):
         self.user_success_stat.pack(side="left", fill="x", expand=True, padx=(0, SPACING["sm"]))
         
         self.user_volume_stat = StatCard(stats_frame, label="Copy Volume", value="$0", icon="💵")
-        self.user_volume_stat.pack(side="left", fill="x", expand=True)
+        self.user_volume_stat.pack(side="left", fill="x", expand=True, padx=(0, SPACING["sm"]))
         
-        # ─── Redeem Info Row ───
-        redeem_frame = ctk.CTkFrame(panel, fg_color=COLORS["bg_secondary"], corner_radius=RADIUS["md"])
-        redeem_frame.pack(fill="x", pady=(0, SPACING["sm"]))
-        
-        redeem_inner = ctk.CTkFrame(redeem_frame, fg_color="transparent")
-        redeem_inner.pack(fill="x", padx=SPACING["md"], pady=SPACING["sm"])
-        
-        ctk.CTkLabel(
-            redeem_inner,
-            text="💎 Redeemable:",
-            font=FONTS["body_bold"],
-            text_color=COLORS["text_secondary"]
-        ).pack(side="left")
-        
-        self.redeem_amount_label = ctk.CTkLabel(
-            redeem_inner,
-            text="$0.00",
-            font=FONTS["body_bold"],
-            text_color=COLORS["chart_green"]
+        self.user_redeem_stat = StatCard(
+            stats_frame, label="Redeemable", value="$0.00", icon="💎",
+            value_color=COLORS["chart_green"]
         )
-        self.redeem_amount_label.pack(side="left", padx=(SPACING["sm"], 0))
+        self.user_redeem_stat.pack(side="left", fill="x", expand=True)
         
         # Positions section
         positions_card = GlassCard(panel, title="Your Positions")
@@ -748,18 +733,15 @@ class Dashboard(ctk.CTk):
         # Store for redeem button
         self._redeemable_positions = redeemable_positions
         
-        # Update UI
+        # Update redeemable stat card
+        self.user_redeem_stat.update_value(
+            f"${redeemable_value:,.2f}",
+            COLORS["chart_green"] if redeemable_value > 0 else COLORS["text_muted"]
+        )
+        
         if redeemable_value > 0:
-            self.redeem_amount_label.configure(
-                text=f"${redeemable_value:.2f}",
-                text_color=COLORS["chart_green"]
-            )
             self.redeem_btn.configure(state="normal")
         else:
-            self.redeem_amount_label.configure(
-                text="$0.00",
-                text_color=COLORS["text_muted"]
-            )
             self.redeem_btn.configure(state="disabled")
     
     def _update_positions_display(self, panel_id: str, container: ctk.CTkScrollableFrame, positions: list):
