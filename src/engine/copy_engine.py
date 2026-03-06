@@ -91,6 +91,13 @@ class CopyTradingEngine:
         
         # Current time period (can be changed from dashboard)
         self._current_period = self.settings.default_period or TimePeriod.ALL
+        
+        # ─── Risk Management State ───
+        self._daily_pnl: float = 0.0          # Track daily P&L
+        self._daily_reset_date: str = ""      # Date string for daily reset
+        self._last_copy_time: float = 0       # For cooldown timer
+        self._market_exposure: Dict[str, float] = {}  # market_id -> total $ invested
+        self._risk_stopped: bool = False       # True if risk limit triggered auto-stop
     
     @property
     def current_period(self) -> str:
@@ -175,6 +182,23 @@ class CopyTradingEngine:
         # Compact log
         logger.info(f"🔔 [LIVE] {event.side} {event.size:.2f} @ {event.price:.3f} | {event.market_id[:12]}...")
         
+        # ─── Risk Management Checks ───
+        skip_reason = await self._check_risk_filters(event)
+        if skip_reason:
+            logger.info(f"🛡️ SKIP: {skip_reason}")
+            self._stats.total_copies += 1
+            self._stats.failed_copies += 1
+            result = CopyTradeResult(
+                success=False,
+                original_event=event,
+                original_size=event.size,
+                original_price=event.price,
+                error=f"Risk: {skip_reason}"
+            )
+            self._stats.copy_history.append(result)
+            await self._notify_ui(result)
+            return
+        
         # Execute copy trade
         result = await self._execute_copy(event)
         
@@ -183,6 +207,15 @@ class CopyTradingEngine:
         if result.success:
             self._stats.successful_copies += 1
             self._stats.total_volume += result.copied_size * result.copied_price
+            
+            # Track per-market exposure
+            mkt = event.market_id
+            cost = result.copied_size * result.copied_price
+            self._market_exposure[mkt] = self._market_exposure.get(mkt, 0) + cost
+            
+            # Update last copy time for cooldown
+            import time
+            self._last_copy_time = time.time()
         else:
             self._stats.failed_copies += 1
         
@@ -190,6 +223,93 @@ class CopyTradingEngine:
         
         # Notify UI
         await self._notify_ui(result)
+    
+    async def _check_risk_filters(self, event: TradeEvent) -> Optional[str]:
+        """Run all risk filters. Returns skip reason string or None if OK."""
+        import time
+        s = self.settings
+        
+        # Reset daily P&L at midnight
+        today = datetime.now().strftime("%Y-%m-%d")
+        if today != self._daily_reset_date:
+            self._daily_pnl = 0.0
+            self._daily_reset_date = today
+        
+        # ─── HIGH IMPACT ───
+        
+        # 1. Daily Loss Limit
+        if s.daily_loss_limit > 0 and self._daily_pnl <= -s.daily_loss_limit:
+            self._risk_stopped = True
+            return f"Daily loss limit hit (${abs(self._daily_pnl):.2f} >= ${s.daily_loss_limit:.2f})"
+        
+        # 2. Max Open Positions
+        if s.max_open_positions > 0:
+            try:
+                positions = await self.client.get_positions()
+                open_count = len([p for p in positions if float(p.get('size', 0)) > 0])
+                if open_count >= s.max_open_positions:
+                    return f"Max positions reached ({open_count}/{s.max_open_positions})"
+            except Exception:
+                pass  # Don't block trade if check fails
+        
+        # 3. Min Price Filter
+        if s.min_price_filter > 0 and event.price < s.min_price_filter:
+            return f"Price too low ({event.price:.3f} < {s.min_price_filter:.2f})"
+        
+        # 4. Max Price Filter
+        if s.max_price_filter > 0 and event.price > s.max_price_filter:
+            return f"Price too high ({event.price:.3f} > {s.max_price_filter:.2f})"
+        
+        # 5. Balance Protection
+        if s.balance_protection > 0:
+            try:
+                balance = await self.client.get_balance()
+                if balance <= s.balance_protection:
+                    self._risk_stopped = True
+                    return f"Balance protection (${balance:.2f} <= ${s.balance_protection:.2f})"
+            except Exception:
+                pass
+        
+        # ─── MEDIUM IMPACT ───
+        
+        # 6. Skip SELL copies
+        if s.skip_sell_copies and event.side == "SELL":
+            return "SELL trade skipped (skip_sell_copies=ON)"
+        
+        # 7. Cooldown Timer
+        if s.cooldown_seconds > 0:
+            elapsed = time.time() - self._last_copy_time
+            if elapsed < s.cooldown_seconds:
+                remaining = s.cooldown_seconds - elapsed
+                return f"Cooldown active ({remaining:.0f}s remaining)"
+        
+        # 8. Per-Market Limit
+        if s.per_market_limit > 0:
+            current_exposure = self._market_exposure.get(event.market_id, 0)
+            trade_cost = event.size * event.price
+            if current_exposure + trade_cost > s.per_market_limit:
+                return f"Per-market limit (${current_exposure:.2f} + ${trade_cost:.2f} > ${s.per_market_limit:.2f})"
+        
+        # ─── ADVANCED ───
+        
+        # 9. Win Rate Filter
+        if s.min_target_winrate > 0 and self._target_stats:
+            if self._target_stats.win_rate < s.min_target_winrate:
+                return f"Target win rate too low ({self._target_stats.win_rate:.1f}% < {s.min_target_winrate:.0f}%)"
+        
+        # 10. Market Expiry Filter
+        if s.skip_expiring_hours > 0:
+            try:
+                market_info = await self.data_fetcher.get_market_info(event.market_id)
+                if market_info and market_info.end_date:
+                    from datetime import timezone
+                    hours_left = (market_info.end_date - datetime.now(timezone.utc)).total_seconds() / 3600
+                    if hours_left < s.skip_expiring_hours:
+                        return f"Market expiring soon ({hours_left:.0f}h < {s.skip_expiring_hours}h)"
+            except Exception:
+                pass
+        
+        return None  # All checks passed
     
     async def _execute_copy(self, event: TradeEvent) -> CopyTradeResult:
         """Execute a copy of the detected trade via MetaMask wallet."""

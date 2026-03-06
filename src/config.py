@@ -62,6 +62,53 @@ class Settings(BaseSettings):
         description="Maximum amount per single trade (safety limit)"
     )
     
+    # ─── Risk Management ───
+    # HIGH IMPACT
+    daily_loss_limit: float = Field(
+        default=50.0,
+        description="Max daily loss in USDC before bot auto-stops (0 = disabled)"
+    )
+    max_open_positions: int = Field(
+        default=10,
+        description="Maximum concurrent open positions (0 = unlimited)"
+    )
+    min_price_filter: float = Field(
+        default=0.10,
+        description="Skip trades below this price (0-1). Avoids lottery bets"
+    )
+    max_price_filter: float = Field(
+        default=0.95,
+        description="Skip trades above this price (0-1). Avoids low-upside bets"
+    )
+    balance_protection: float = Field(
+        default=5.0,
+        description="Stop copying if wallet balance drops below this USDC amount (0 = disabled)"
+    )
+    
+    # MEDIUM IMPACT
+    skip_sell_copies: bool = Field(
+        default=False,
+        description="If True, only copy BUY trades, skip SELL trades"
+    )
+    cooldown_seconds: int = Field(
+        default=0,
+        description="Minimum seconds between consecutive copies (0 = no cooldown)"
+    )
+    per_market_limit: float = Field(
+        default=0.0,
+        description="Max USDC exposure per single market (0 = unlimited)"
+    )
+    
+    # ADVANCED
+    min_target_winrate: float = Field(
+        default=0.0,
+        description="Skip copying if target win rate is below this % (0 = disabled)"
+    )
+    skip_expiring_hours: int = Field(
+        default=0,
+        description="Skip markets expiring within this many hours (0 = disabled)"
+    )
+    
     # MongoDB
     mongodb_uri: str = Field(
         default="mongodb://localhost:27017",
