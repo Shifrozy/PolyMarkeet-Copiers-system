@@ -123,7 +123,7 @@ class Dashboard(ctk.CTk):
         # Configure window
         self.title("🚀 PolyBot - Copy Trader")
         self.geometry("1200x900")
-        self.minsize(1000, 700)
+        self.minsize(900, 600)
         self.resizable(True, True)
         
         # Theme
@@ -188,26 +188,26 @@ class Dashboard(ctk.CTk):
     def _create_header(self):
         """Create the header section with time period selector."""
         header = ctk.CTkFrame(self, fg_color=COLORS["bg_secondary"])
-        header.pack(fill="x", padx=SPACING["lg"], pady=SPACING["lg"])
+        header.pack(fill="x", padx=SPACING["md"], pady=(SPACING["md"], SPACING["sm"]))
         
         inner = ctk.CTkFrame(header, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=SPACING["lg"])
+        inner.pack(fill="both", expand=True, padx=SPACING["sm"])
         
-        # Left - Logo and title
+        # Left - Logo and title (compact)
         left = ctk.CTkFrame(inner, fg_color="transparent")
         left.pack(side="left", fill="y")
         
         title = ctk.CTkLabel(
             left,
-            text="🤖 Polymarket Copy Bot",
-            font=FONTS["heading"],
+            text="🤖 PolyBot",
+            font=FONTS["subheading"],
             text_color=COLORS["text_primary"]
         )
-        title.pack(side="left", pady=SPACING["md"])
+        title.pack(side="left", pady=SPACING["sm"])
         
         # Wallet type badge
         wallet_type = getattr(self.settings, 'wallet_type', 'metamask')
-        badge_text = "🦊 MetaMask" if wallet_type == "metamask" else "🏦 Polymarket"
+        badge_text = "🦊" if wallet_type == "metamask" else "🏦"
         badge_color = COLORS["chart_orange"] if wallet_type == "metamask" else COLORS["accent_primary"]
         
         wallet_badge = ctk.CTkLabel(
@@ -217,21 +217,13 @@ class Dashboard(ctk.CTk):
             text_color=badge_color,
             fg_color=COLORS["bg_tertiary"],
             corner_radius=RADIUS["sm"],
-            padx=8, pady=4
+            padx=4, pady=2
         )
-        wallet_badge.pack(side="left", padx=SPACING["sm"], pady=SPACING["md"])
+        wallet_badge.pack(side="left", padx=SPACING["xs"], pady=SPACING["sm"])
         
-        version = ctk.CTkLabel(
-            left,
-            text="v2.0.0",
-            font=FONTS["small"],
-            text_color=COLORS["text_muted"]
-        )
-        version.pack(side="left", padx=SPACING["sm"], pady=SPACING["md"])
-        
-        # Center - Time Period Selector + Status
+        # Center - Time Period Selector + Status (no expand, take only needed space)
         center = ctk.CTkFrame(inner, fg_color="transparent")
-        center.pack(side="left", fill="y", expand=True, padx=SPACING["xl"])
+        center.pack(side="left", fill="y", expand=True, padx=SPACING["sm"])
         
         # Time period selector (1D | 1M | 1Y | ALL)
         self.period_selector = TimePeriodSelector(
@@ -239,43 +231,51 @@ class Dashboard(ctk.CTk):
             on_change=self._on_period_change,
             default=self._current_period
         )
-        self.period_selector.pack(side="left", pady=SPACING["md"])
+        self.period_selector.pack(side="left", pady=SPACING["sm"])
         
         # Status indicators
         self.status_indicator = StatusIndicator(center, label="Bot", status="Offline")
-        self.status_indicator.pack(side="left", padx=SPACING["lg"], pady=SPACING["md"])
+        self.status_indicator.pack(side="left", padx=SPACING["sm"], pady=SPACING["sm"])
         
         self.connection_indicator = StatusIndicator(center, label="API", status="Disconnected")
-        self.connection_indicator.pack(side="left", pady=SPACING["md"])
+        self.connection_indicator.pack(side="left", pady=SPACING["sm"])
         
-        # Right - Action buttons
+        # Right - Action buttons (compact, always visible)
         right = ctk.CTkFrame(inner, fg_color="transparent")
         right.pack(side="right", fill="y")
         
-        self.start_btn = ActionButton(
-            right, text="Start Bot", variant="success", icon="▶️",
-            command=self._on_start
+        self.start_btn = ctk.CTkButton(
+            right, text="▶ Start",
+            fg_color="#00C853", hover_color="#00A844", text_color="#FFFFFF",
+            font=FONTS["body_bold"], corner_radius=RADIUS["md"],
+            height=36, width=80, command=self._on_start
         )
-        self.start_btn.pack(side="left", padx=(0, SPACING["sm"]), pady=SPACING["md"])
+        self.start_btn.pack(side="left", padx=(0, 4), pady=SPACING["sm"])
         
-        self.stop_btn = ActionButton(
-            right, text="Stop", variant="danger", icon="⏹️",
-            command=self._on_stop
+        self.stop_btn = ctk.CTkButton(
+            right, text="⏹ Stop",
+            fg_color="#E53935", hover_color="#C62828", text_color="#FFFFFF",
+            font=FONTS["body_bold"], corner_radius=RADIUS["md"],
+            height=36, width=75, command=self._on_stop
         )
-        self.stop_btn.pack(side="left", padx=(0, SPACING["sm"]), pady=SPACING["md"])
+        self.stop_btn.pack(side="left", padx=(0, 4), pady=SPACING["sm"])
         self.stop_btn.configure(state="disabled")
         
-        self.redeem_btn = ActionButton(
-            right, text="🎁 Redeem", variant="success", icon="",
-            command=self._on_redeem_all, width=110
+        self.redeem_btn = ctk.CTkButton(
+            right, text="🎁 Redeem",
+            fg_color="#00BFA5", hover_color="#00897B", text_color="#FFFFFF",
+            font=FONTS["body_bold"], corner_radius=RADIUS["md"],
+            height=36, width=90, command=self._on_redeem_all
         )
-        self.redeem_btn.pack(side="left", padx=(0, SPACING["sm"]), pady=SPACING["md"])
+        self.redeem_btn.pack(side="left", padx=(0, 4), pady=SPACING["sm"])
         
-        settings_btn = ActionButton(
-            right, text="⚙️", variant="secondary", width=40,
-            command=self._on_settings
+        settings_btn = ctk.CTkButton(
+            right, text="⚙️",
+            fg_color=COLORS["bg_tertiary"], hover_color=COLORS["border"], text_color="#FFFFFF",
+            font=FONTS["body_bold"], corner_radius=RADIUS["md"],
+            height=36, width=40, command=self._on_settings
         )
-        settings_btn.pack(side="left", pady=SPACING["md"])
+        settings_btn.pack(side="left", pady=SPACING["sm"])
     
     def _create_left_panel(self, parent) -> ctk.CTkFrame:
         """Create the left panel for target wallet info."""
@@ -972,6 +972,7 @@ class Dashboard(ctk.CTk):
         # ─── HIGH IMPACT ───
         section_header("HIGH IMPACT", "🔴")
         add_input("Daily Loss Limit ($)", "daily_loss_limit", s.daily_loss_limit, "50")
+        add_input("Max Daily Trades", "max_daily_trades", s.max_daily_trades, "0")
         add_input("Max Open Positions", "max_open_positions", s.max_open_positions, "10")
         add_input("Min Price (0-1)", "min_price_filter", s.min_price_filter, "0.10")
         add_input("Max Price (0-1)", "max_price_filter", s.max_price_filter, "0.95")
@@ -1001,14 +1002,15 @@ class Dashboard(ctk.CTk):
         
         # ─── Save ───
         risk_env_keys = {
-            "daily_loss_limit": "DAILY_LOSS_LIMIT", "max_open_positions": "MAX_OPEN_POSITIONS",
+            "daily_loss_limit": "DAILY_LOSS_LIMIT", "max_daily_trades": "MAX_DAILY_TRADES",
+            "max_open_positions": "MAX_OPEN_POSITIONS",
             "min_price_filter": "MIN_PRICE_FILTER", "max_price_filter": "MAX_PRICE_FILTER",
             "balance_protection": "BALANCE_PROTECTION", "skip_sell_copies": "SKIP_SELL_COPIES",
             "cooldown_seconds": "COOLDOWN_SECONDS", "per_market_limit": "PER_MARKET_LIMIT",
             "min_target_winrate": "MIN_TARGET_WINRATE", "skip_expiring_hours": "SKIP_EXPIRING_HOURS",
         }
         risk_types = {
-            "daily_loss_limit": float, "max_open_positions": int,
+            "daily_loss_limit": float, "max_daily_trades": int, "max_open_positions": int,
             "min_price_filter": float, "max_price_filter": float,
             "balance_protection": float, "skip_sell_copies": bool,
             "cooldown_seconds": int, "per_market_limit": float,

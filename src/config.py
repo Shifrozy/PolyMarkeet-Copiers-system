@@ -108,6 +108,10 @@ class Settings(BaseSettings):
         default=0,
         description="Skip markets expiring within this many hours (0 = disabled)"
     )
+    max_daily_trades: int = Field(
+        default=0,
+        description="Maximum trades per day (0 = unlimited)"
+    )
     
     # MongoDB
     mongodb_uri: str = Field(

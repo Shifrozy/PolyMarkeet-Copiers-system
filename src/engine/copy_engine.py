@@ -98,6 +98,7 @@ class CopyTradingEngine:
         self._last_copy_time: float = 0       # For cooldown timer
         self._market_exposure: Dict[str, float] = {}  # market_id -> total $ invested
         self._risk_stopped: bool = False       # True if risk limit triggered auto-stop
+        self._daily_trade_count: int = 0       # Track daily trade count
     
     @property
     def current_period(self) -> str:
@@ -216,6 +217,9 @@ class CopyTradingEngine:
             # Update last copy time for cooldown
             import time
             self._last_copy_time = time.time()
+            
+            # Increment daily trade counter
+            self._daily_trade_count += 1
         else:
             self._stats.failed_copies += 1
         
@@ -229,10 +233,11 @@ class CopyTradingEngine:
         import time
         s = self.settings
         
-        # Reset daily P&L at midnight
+        # Reset daily counters at midnight
         today = datetime.now().strftime("%Y-%m-%d")
         if today != self._daily_reset_date:
             self._daily_pnl = 0.0
+            self._daily_trade_count = 0
             self._daily_reset_date = today
         
         # ─── HIGH IMPACT ───
@@ -241,6 +246,10 @@ class CopyTradingEngine:
         if s.daily_loss_limit > 0 and self._daily_pnl <= -s.daily_loss_limit:
             self._risk_stopped = True
             return f"Daily loss limit hit (${abs(self._daily_pnl):.2f} >= ${s.daily_loss_limit:.2f})"
+        
+        # 2. Max Daily Trades
+        if s.max_daily_trades > 0 and self._daily_trade_count >= s.max_daily_trades:
+            return f"Max daily trades reached ({self._daily_trade_count}/{s.max_daily_trades})"
         
         # 2. Max Open Positions
         if s.max_open_positions > 0:
