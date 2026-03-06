@@ -187,9 +187,8 @@ class Dashboard(ctk.CTk):
     
     def _create_header(self):
         """Create the header section with time period selector."""
-        header = ctk.CTkFrame(self, fg_color=COLORS["bg_secondary"], height=70)
+        header = ctk.CTkFrame(self, fg_color=COLORS["bg_secondary"])
         header.pack(fill="x", padx=SPACING["lg"], pady=SPACING["lg"])
-        header.pack_propagate(False)
         
         inner = ctk.CTkFrame(header, fg_color="transparent")
         inner.pack(fill="both", expand=True, padx=SPACING["lg"])
@@ -794,11 +793,51 @@ class Dashboard(ctk.CTk):
             ).pack(pady=SPACING["md"])
     
     # ─── Settings Dialog ────────────────────────────────────────────────────
+    def _save_to_env(self, keys_map: dict):
+        """Write settings to .env file."""
+        try:
+            from pathlib import Path
+            env_path = Path(__file__).parent.parent.parent / ".env"
+            lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+            
+            s = self.settings
+            for setting_key, env_key in keys_map.items():
+                val = getattr(s, setting_key, "")
+                new_line = f"{env_key}={val}"
+                found = False
+                for i, line in enumerate(lines):
+                    if line.strip().startswith(f"{env_key}="):
+                        lines[i] = new_line
+                        found = True
+                        break
+                if not found:
+                    lines.append(new_line)
+            
+            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            logger.info("💾 Settings saved to .env!")
+        except Exception as e:
+            logger.warning(f"Could not write .env: {e}")
+    
+    def _apply_entries(self, entries: dict, type_map: dict):
+        """Apply UI entries to settings object."""
+        s = self.settings
+        for key, entry in entries.items():
+            try:
+                val = entry.get() if isinstance(entry, (ctk.BooleanVar, ctk.StringVar)) else entry.get()
+                cast = type_map.get(key, str)
+                if cast == bool:
+                    typed_val = val if isinstance(val, bool) else str(val).lower() in ("true", "1", "yes")
+                else:
+                    typed_val = cast(val)
+                setattr(s, key, typed_val)
+            except Exception as e:
+                logger.warning(f"Could not save {key}: {e}")
+    
     def _show_settings_dialog(self):
-        """Show settings dialog with all risk management settings."""
+        """Show Trading Settings dialog with Risk Management button."""
         dialog = ctk.CTkToplevel(self)
-        dialog.title("⚙️ Settings & Risk Management")
-        dialog.geometry("520x820")
+        dialog.title("⚙️ Trading Settings")
+        dialog.geometry("480x520")
         dialog.configure(fg_color=COLORS["bg_dark"])
         dialog.transient(self)
         dialog.grab_set()
@@ -808,212 +847,188 @@ class Dashboard(ctk.CTk):
         content.pack(fill="both", expand=True, padx=SPACING["lg"], pady=SPACING["lg"])
         
         s = self.settings
-        entries = {}  # Store all input references
+        entries = {}
         
-        # ─── Helper: Section Header ───
-        def section_header(text, icon=""):
-            frame = ctk.CTkFrame(content, fg_color=COLORS["bg_tertiary"], corner_radius=RADIUS["sm"])
-            frame.pack(fill="x", pady=(SPACING["md"], SPACING["xs"]))
-            ctk.CTkLabel(
-                frame, text=f"{icon} {text}",
-                font=FONTS["body_bold"], text_color=COLORS["accent_primary"]
-            ).pack(anchor="w", padx=SPACING["md"], pady=SPACING["sm"])
-        
-        # ─── Helper: Input Row ───
+        # ─── Helpers (local) ───
         def add_input(label, key, default, placeholder="", width=None):
             row = ctk.CTkFrame(content, fg_color="transparent")
             row.pack(fill="x", pady=(0, SPACING["xs"]))
-            ctk.CTkLabel(
-                row, text=label,
-                font=FONTS["small"], text_color=COLORS["text_secondary"]
-            ).pack(side="left")
-            entry = ctk.CTkEntry(
-                row, placeholder_text=placeholder or str(default),
-                font=FONTS["small"], fg_color=COLORS["bg_secondary"],
-                border_color=COLORS["border"], height=32,
-                width=width or 120
-            )
+            ctk.CTkLabel(row, text=label, font=FONTS["small"], text_color=COLORS["text_secondary"]).pack(side="left")
+            entry = ctk.CTkEntry(row, placeholder_text=placeholder or str(default), font=FONTS["small"],
+                fg_color=COLORS["bg_secondary"], border_color=COLORS["border"], height=32, width=width or 120)
             entry.insert(0, str(getattr(s, key, default)))
             entry.pack(side="right")
             entries[key] = entry
-            return entry
         
-        # ─── Helper: Toggle Row ───
-        def add_toggle(label, key, default=False):
-            row = ctk.CTkFrame(content, fg_color="transparent")
-            row.pack(fill="x", pady=(0, SPACING["xs"]))
-            ctk.CTkLabel(
-                row, text=label,
-                font=FONTS["small"], text_color=COLORS["text_secondary"]
-            ).pack(side="left")
-            var = ctk.BooleanVar(value=getattr(s, key, default))
-            switch = ctk.CTkSwitch(
-                row, text="", variable=var,
-                onvalue=True, offvalue=False,
-                fg_color=COLORS["bg_tertiary"],
-                progress_color=COLORS["success"],
-                width=40
-            )
-            switch.pack(side="right")
-            entries[key] = var
-            return var
-        
-        # ─── Helper: Dropdown Row ───
         def add_dropdown(label, key, options, default):
             row = ctk.CTkFrame(content, fg_color="transparent")
             row.pack(fill="x", pady=(0, SPACING["xs"]))
-            ctk.CTkLabel(
-                row, text=label,
-                font=FONTS["small"], text_color=COLORS["text_secondary"]
-            ).pack(side="left")
+            ctk.CTkLabel(row, text=label, font=FONTS["small"], text_color=COLORS["text_secondary"]).pack(side="left")
             var = ctk.StringVar(value=str(getattr(s, key, default)))
-            menu = ctk.CTkOptionMenu(
-                row, variable=var, values=options,
-                fg_color=COLORS["bg_secondary"],
-                button_color=COLORS["accent_primary"],
-                height=32, width=140
-            )
-            menu.pack(side="right")
+            ctk.CTkOptionMenu(row, variable=var, values=options, fg_color=COLORS["bg_secondary"],
+                button_color=COLORS["accent_primary"], height=32, width=140).pack(side="right")
             entries[key] = var
-            return var
         
         # ═══════════════════════════════════════════
-        # TITLE
-        ctk.CTkLabel(
-            content, text="⚙️ Settings & Risk Management",
-            font=FONTS["heading"], text_color=COLORS["text_primary"]
-        ).pack(anchor="w", pady=(0, SPACING["sm"]))
-        
-        # ═══════════════════════════════════════════
-        section_header("TRADING SETTINGS", "📊")
+        ctk.CTkLabel(content, text="⚙️ Trading Settings", font=FONTS["heading"],
+            text_color=COLORS["text_primary"]).pack(anchor="w", pady=(0, SPACING["md"]))
         
         add_dropdown("Wallet Type", "wallet_type", ["metamask", "polymarket"], "metamask")
-        add_input("Target Wallet", "target_wallet_address", s.target_wallet_address, "0x...", width=260)
+        add_input("Target Wallet", "target_wallet_address", s.target_wallet_address, "0x...", width=240)
         add_dropdown("Copy Mode", "copy_mode", ["proportional", "fixed", "mirror"], "proportional")
         add_input("Scale Factor", "scale_factor", s.scale_factor, "1.0")
         add_input("Fixed Amount ($)", "fixed_trade_amount", s.fixed_trade_amount, "10")
         add_input("Max Trade ($)", "max_trade_amount", s.max_trade_amount, "100")
         
-        # ═══════════════════════════════════════════
-        section_header("HIGH IMPACT RISK CONTROLS", "🛡️")
+        # ─── Info Box ───
+        info_frame = ctk.CTkFrame(content, fg_color=COLORS["bg_tertiary"], corner_radius=RADIUS["md"])
+        info_frame.pack(fill="x", pady=(SPACING["md"], SPACING["sm"]))
+        ctk.CTkLabel(info_frame,
+            text="ℹ️ MetaMask mode: signature_type=0 (EOA)\n"
+                 "API keys auto-derived from private key.\n"
+                 "Set PRIVATE_KEY in .env file.",
+            font=FONTS["small"], text_color=COLORS["text_muted"], justify="left"
+        ).pack(padx=SPACING["md"], pady=SPACING["sm"])
         
+        # ─── Risk Management Button ───
+        ActionButton(
+            content, text="🛡️ Risk Management", variant="secondary", icon="",
+            command=lambda: self._show_risk_dialog(dialog)
+        ).pack(fill="x", pady=(SPACING["sm"], 0))
+        
+        # ─── Save Button ───
+        trade_env_keys = {
+            "target_wallet_address": "TARGET_WALLET_ADDRESS",
+            "copy_mode": "COPY_MODE", "scale_factor": "SCALE_FACTOR",
+            "fixed_trade_amount": "FIXED_TRADE_AMOUNT", "max_trade_amount": "MAX_TRADE_AMOUNT",
+        }
+        trade_types = {
+            "wallet_type": str, "target_wallet_address": str, "copy_mode": str,
+            "scale_factor": float, "fixed_trade_amount": float, "max_trade_amount": float,
+        }
+        
+        def save_trade():
+            self._apply_entries(entries, trade_types)
+            self._save_to_env(trade_env_keys)
+            dialog.destroy()
+            logger.info("✅ Trading settings saved!")
+        
+        ActionButton(content, text="💾 Save Settings", variant="primary", icon="",
+            command=save_trade).pack(fill="x", pady=(SPACING["sm"], 0))
+    
+    def _show_risk_dialog(self, parent_dialog=None):
+        """Show Risk Management settings in a separate dialog."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("🛡️ Risk Management")
+        dialog.geometry("460x620")
+        dialog.configure(fg_color=COLORS["bg_dark"])
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(True, True)
+        
+        # Release parent grab so this one takes focus
+        if parent_dialog:
+            try:
+                parent_dialog.grab_release()
+            except Exception:
+                pass
+        
+        content = ctk.CTkScrollableFrame(dialog, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=SPACING["lg"], pady=SPACING["lg"])
+        
+        s = self.settings
+        entries = {}
+        
+        # ─── Helpers ───
+        def section_header(text, icon=""):
+            frame = ctk.CTkFrame(content, fg_color=COLORS["bg_tertiary"], corner_radius=RADIUS["sm"])
+            frame.pack(fill="x", pady=(SPACING["md"], SPACING["xs"]))
+            ctk.CTkLabel(frame, text=f"{icon} {text}", font=FONTS["body_bold"],
+                text_color=COLORS["accent_primary"]).pack(anchor="w", padx=SPACING["md"], pady=SPACING["sm"])
+        
+        def add_input(label, key, default, placeholder=""):
+            row = ctk.CTkFrame(content, fg_color="transparent")
+            row.pack(fill="x", pady=(0, SPACING["xs"]))
+            ctk.CTkLabel(row, text=label, font=FONTS["small"], text_color=COLORS["text_secondary"]).pack(side="left")
+            entry = ctk.CTkEntry(row, placeholder_text=placeholder or str(default), font=FONTS["small"],
+                fg_color=COLORS["bg_secondary"], border_color=COLORS["border"], height=32, width=120)
+            entry.insert(0, str(getattr(s, key, default)))
+            entry.pack(side="right")
+            entries[key] = entry
+        
+        def add_toggle(label, key, default=False):
+            row = ctk.CTkFrame(content, fg_color="transparent")
+            row.pack(fill="x", pady=(0, SPACING["xs"]))
+            ctk.CTkLabel(row, text=label, font=FONTS["small"], text_color=COLORS["text_secondary"]).pack(side="left")
+            var = ctk.BooleanVar(value=getattr(s, key, default))
+            ctk.CTkSwitch(row, text="", variable=var, onvalue=True, offvalue=False,
+                fg_color=COLORS["bg_tertiary"], progress_color=COLORS["success"], width=40).pack(side="right")
+            entries[key] = var
+        
+        # ═══════════════════════════════════════════
+        ctk.CTkLabel(content, text="🛡️ Risk Management", font=FONTS["heading"],
+            text_color=COLORS["text_primary"]).pack(anchor="w", pady=(0, SPACING["sm"]))
+        
+        # ─── HIGH IMPACT ───
+        section_header("HIGH IMPACT", "🔴")
         add_input("Daily Loss Limit ($)", "daily_loss_limit", s.daily_loss_limit, "50")
         add_input("Max Open Positions", "max_open_positions", s.max_open_positions, "10")
-        add_input("Min Price Filter (0-1)", "min_price_filter", s.min_price_filter, "0.10")
-        add_input("Max Price Filter (0-1)", "max_price_filter", s.max_price_filter, "0.95")
+        add_input("Min Price (0-1)", "min_price_filter", s.min_price_filter, "0.10")
+        add_input("Max Price (0-1)", "max_price_filter", s.max_price_filter, "0.95")
         add_input("Balance Protection ($)", "balance_protection", s.balance_protection, "5")
         
-        # ═══════════════════════════════════════════
-        section_header("MEDIUM IMPACT CONTROLS", "⚡")
-        
-        add_toggle("Skip SELL Copies (BUY only)", "skip_sell_copies", s.skip_sell_copies)
+        # ─── MEDIUM IMPACT ───
+        section_header("MEDIUM IMPACT", "🟡")
+        add_toggle("Skip SELL Copies", "skip_sell_copies", s.skip_sell_copies)
         add_input("Cooldown (seconds)", "cooldown_seconds", s.cooldown_seconds, "0")
         add_input("Per-Market Limit ($)", "per_market_limit", s.per_market_limit, "0")
         
-        # ═══════════════════════════════════════════
-        section_header("ADVANCED FILTERS", "🔬")
+        # ─── ADVANCED ───
+        section_header("ADVANCED", "🔬")
+        add_input("Min Win Rate (%)", "min_target_winrate", s.min_target_winrate, "0")
+        add_input("Skip Expiring (hrs)", "skip_expiring_hours", s.skip_expiring_hours, "0")
         
-        add_input("Min Target Win Rate (%)", "min_target_winrate", s.min_target_winrate, "0")
-        add_input("Skip Expiring (hours)", "skip_expiring_hours", s.skip_expiring_hours, "0")
-        
-        # ═══════════════════════════════════════════
-        section_header("MY RECOMMENDATIONS", "💡")
-        
-        rec_frame = ctk.CTkFrame(content, fg_color=COLORS["bg_tertiary"], corner_radius=RADIUS["md"])
-        rec_frame.pack(fill="x", pady=(0, SPACING["md"]))
-        ctk.CTkLabel(
-            rec_frame,
-            text="• Daily Loss: $50  • Min Price: 0.10\n"
-                 "• Max Price: 0.95  • Balance Protect: $5\n"
-                 "• Max Positions: 10  • Cooldown: 5s\n"
-                 "• Set 0 to disable any filter",
-            font=FONTS["small"],
-            text_color=COLORS["text_muted"],
-            justify="left"
+        # ─── Tips ───
+        tips = ctk.CTkFrame(content, fg_color=COLORS["bg_tertiary"], corner_radius=RADIUS["md"])
+        tips.pack(fill="x", pady=(SPACING["md"], SPACING["sm"]))
+        ctk.CTkLabel(tips,
+            text="💡 Recommended defaults:\n"
+                 "  Daily Loss: $50 | Min: 0.10 | Max: 0.95\n"
+                 "  Balance Protect: $5 | Cooldown: 5s\n"
+                 "  Set any value to 0 to disable it",
+            font=FONTS["small"], text_color=COLORS["text_muted"], justify="left"
         ).pack(padx=SPACING["md"], pady=SPACING["sm"])
         
-        # ─── Save Button ───
-        def save_settings():
-            """Save all settings to memory and .env file."""
-            type_map = {
-                "wallet_type": str, "target_wallet_address": str, "copy_mode": str,
-                "scale_factor": float, "fixed_trade_amount": float, "max_trade_amount": float,
-                "daily_loss_limit": float, "max_open_positions": int,
-                "min_price_filter": float, "max_price_filter": float,
-                "balance_protection": float, "skip_sell_copies": bool,
-                "cooldown_seconds": int, "per_market_limit": float,
-                "min_target_winrate": float, "skip_expiring_hours": int,
-            }
-            
-            for key, entry in entries.items():
-                try:
-                    if isinstance(entry, (ctk.BooleanVar, ctk.StringVar)):
-                        val = entry.get()
-                    else:
-                        val = entry.get()
-                    
-                    cast = type_map.get(key, str)
-                    if cast == bool:
-                        typed_val = val if isinstance(val, bool) else val.lower() in ("true", "1", "yes")
-                    else:
-                        typed_val = cast(val)
-                    
-                    setattr(s, key, typed_val)
-                except Exception as e:
-                    logger.warning(f"Could not save {key}: {e}")
-            
-            # Write to .env file
-            try:
-                from pathlib import Path
-                env_path = Path(__file__).parent.parent.parent / ".env"
-                if env_path.exists():
-                    lines = env_path.read_text(encoding="utf-8").splitlines()
-                else:
-                    lines = []
-                
-                env_keys = {
-                    "daily_loss_limit": "DAILY_LOSS_LIMIT",
-                    "max_open_positions": "MAX_OPEN_POSITIONS",
-                    "min_price_filter": "MIN_PRICE_FILTER",
-                    "max_price_filter": "MAX_PRICE_FILTER",
-                    "balance_protection": "BALANCE_PROTECTION",
-                    "skip_sell_copies": "SKIP_SELL_COPIES",
-                    "cooldown_seconds": "COOLDOWN_SECONDS",
-                    "per_market_limit": "PER_MARKET_LIMIT",
-                    "min_target_winrate": "MIN_TARGET_WINRATE",
-                    "skip_expiring_hours": "SKIP_EXPIRING_HOURS",
-                    "max_trade_amount": "MAX_TRADE_AMOUNT",
-                    "scale_factor": "SCALE_FACTOR",
-                    "fixed_trade_amount": "FIXED_TRADE_AMOUNT",
-                    "copy_mode": "COPY_MODE",
-                    "target_wallet_address": "TARGET_WALLET_ADDRESS",
-                }
-                
-                for setting_key, env_key in env_keys.items():
-                    val = getattr(s, setting_key, "")
-                    new_line = f"{env_key}={val}"
-                    found = False
-                    for i, line in enumerate(lines):
-                        if line.strip().startswith(f"{env_key}="):
-                            lines[i] = new_line
-                            found = True
-                            break
-                    if not found:
-                        lines.append(new_line)
-                
-                env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-                logger.info("💾 Settings saved to .env!")
-                
-            except Exception as e:
-                logger.warning(f"Could not write .env: {e}")
-            
-            dialog.destroy()
-            logger.info("✅ All settings applied!")
+        # ─── Save ───
+        risk_env_keys = {
+            "daily_loss_limit": "DAILY_LOSS_LIMIT", "max_open_positions": "MAX_OPEN_POSITIONS",
+            "min_price_filter": "MIN_PRICE_FILTER", "max_price_filter": "MAX_PRICE_FILTER",
+            "balance_protection": "BALANCE_PROTECTION", "skip_sell_copies": "SKIP_SELL_COPIES",
+            "cooldown_seconds": "COOLDOWN_SECONDS", "per_market_limit": "PER_MARKET_LIMIT",
+            "min_target_winrate": "MIN_TARGET_WINRATE", "skip_expiring_hours": "SKIP_EXPIRING_HOURS",
+        }
+        risk_types = {
+            "daily_loss_limit": float, "max_open_positions": int,
+            "min_price_filter": float, "max_price_filter": float,
+            "balance_protection": float, "skip_sell_copies": bool,
+            "cooldown_seconds": int, "per_market_limit": float,
+            "min_target_winrate": float, "skip_expiring_hours": int,
+        }
         
-        ActionButton(
-            content, text="💾 Save Settings", variant="primary", icon="",
-            command=save_settings
-        ).pack(fill="x", pady=(SPACING["md"], 0))
+        def save_risk():
+            self._apply_entries(entries, risk_types)
+            self._save_to_env(risk_env_keys)
+            dialog.destroy()
+            # Re-grab parent if it exists
+            if parent_dialog and parent_dialog.winfo_exists():
+                try:
+                    parent_dialog.grab_set()
+                except Exception:
+                    pass
+            logger.info("✅ Risk management settings saved!")
+        
+        ActionButton(content, text="💾 Save Risk Settings", variant="primary", icon="",
+            command=save_risk).pack(fill="x", pady=(SPACING["sm"], 0))
 
 
     def _on_close(self):
