@@ -986,6 +986,8 @@ class Dashboard(ctk.CTk):
         
         # ─── ADVANCED ───
         section_header("ADVANCED", "🔬")
+        add_toggle("Only Crypto Markets", "only_crypto_markets", s.only_crypto_markets)
+        add_input("Auto Redeem (minutes)", "auto_redeem_minutes", s.auto_redeem_minutes, "15")
         add_input("Min Win Rate (%)", "min_target_winrate", s.min_target_winrate, "0")
         add_input("Skip Expiring (hrs)", "skip_expiring_hours", s.skip_expiring_hours, "0")
         
@@ -1008,6 +1010,7 @@ class Dashboard(ctk.CTk):
             "balance_protection": "BALANCE_PROTECTION", "skip_sell_copies": "SKIP_SELL_COPIES",
             "cooldown_seconds": "COOLDOWN_SECONDS", "per_market_limit": "PER_MARKET_LIMIT",
             "min_target_winrate": "MIN_TARGET_WINRATE", "skip_expiring_hours": "SKIP_EXPIRING_HOURS",
+            "only_crypto_markets": "ONLY_CRYPTO_MARKETS", "auto_redeem_minutes": "AUTO_REDEEM_MINUTES",
         }
         risk_types = {
             "daily_loss_limit": float, "max_daily_trades": int, "max_open_positions": int,
@@ -1015,6 +1018,7 @@ class Dashboard(ctk.CTk):
             "balance_protection": float, "skip_sell_copies": bool,
             "cooldown_seconds": int, "per_market_limit": float,
             "min_target_winrate": float, "skip_expiring_hours": int,
+            "only_crypto_markets": bool, "auto_redeem_minutes": int,
         }
         
         def save_risk():

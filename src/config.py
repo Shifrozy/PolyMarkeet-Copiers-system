@@ -112,6 +112,14 @@ class Settings(BaseSettings):
         default=0,
         description="Maximum trades per day (0 = unlimited)"
     )
+    only_crypto_markets: bool = Field(
+        default=True,
+        description="Only copy trades in crypto-related markets"
+    )
+    auto_redeem_minutes: int = Field(
+        default=15,
+        description="Auto-redeem interval in minutes (0 = disabled)"
+    )
     
     # MongoDB
     mongodb_uri: str = Field(

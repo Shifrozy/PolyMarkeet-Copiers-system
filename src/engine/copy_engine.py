@@ -162,6 +162,11 @@ class CopyTradingEngine:
         
         # Start stats refresh loop
         asyncio.create_task(self._refresh_stats_loop())
+        
+        # Start auto-redeem loop if enabled
+        if self.settings.auto_redeem_minutes > 0:
+            asyncio.create_task(self._auto_redeem_loop())
+            logger.info(f"🔄 Auto-redeem enabled: every {self.settings.auto_redeem_minutes} minutes")
     
     async def stop(self):
         """Stop copy trading."""
@@ -240,6 +245,17 @@ class CopyTradingEngine:
             self._daily_trade_count = 0
             self._daily_reset_date = today
         
+        # ─── CRYPTO FILTER (runs first) ───
+        
+        # 0. Only Crypto Markets
+        if s.only_crypto_markets:
+            try:
+                market_info = await self.data_fetcher.get_market_info(event.market_id)
+                if market_info and not self._is_crypto_market(market_info):
+                    return f"Non-crypto market skipped: {market_info.question[:40]}..."
+            except Exception:
+                pass  # Don't block if check fails
+        
         # ─── HIGH IMPACT ───
         
         # 1. Daily Loss Limit
@@ -251,7 +267,7 @@ class CopyTradingEngine:
         if s.max_daily_trades > 0 and self._daily_trade_count >= s.max_daily_trades:
             return f"Max daily trades reached ({self._daily_trade_count}/{s.max_daily_trades})"
         
-        # 2. Max Open Positions
+        # 3. Max Open Positions
         if s.max_open_positions > 0:
             try:
                 positions = await self.client.get_positions()
@@ -261,15 +277,15 @@ class CopyTradingEngine:
             except Exception:
                 pass  # Don't block trade if check fails
         
-        # 3. Min Price Filter
+        # 4. Min Price Filter
         if s.min_price_filter > 0 and event.price < s.min_price_filter:
             return f"Price too low ({event.price:.3f} < {s.min_price_filter:.2f})"
         
-        # 4. Max Price Filter
+        # 5. Max Price Filter
         if s.max_price_filter > 0 and event.price > s.max_price_filter:
             return f"Price too high ({event.price:.3f} > {s.max_price_filter:.2f})"
         
-        # 5. Balance Protection
+        # 6. Balance Protection
         if s.balance_protection > 0:
             try:
                 balance = await self.client.get_balance()
@@ -281,18 +297,18 @@ class CopyTradingEngine:
         
         # ─── MEDIUM IMPACT ───
         
-        # 6. Skip SELL copies
+        # 7. Skip SELL copies
         if s.skip_sell_copies and event.side == "SELL":
             return "SELL trade skipped (skip_sell_copies=ON)"
         
-        # 7. Cooldown Timer
+        # 8. Cooldown Timer
         if s.cooldown_seconds > 0:
             elapsed = time.time() - self._last_copy_time
             if elapsed < s.cooldown_seconds:
                 remaining = s.cooldown_seconds - elapsed
                 return f"Cooldown active ({remaining:.0f}s remaining)"
         
-        # 8. Per-Market Limit
+        # 9. Per-Market Limit
         if s.per_market_limit > 0:
             current_exposure = self._market_exposure.get(event.market_id, 0)
             trade_cost = event.size * event.price
@@ -301,12 +317,12 @@ class CopyTradingEngine:
         
         # ─── ADVANCED ───
         
-        # 9. Win Rate Filter
+        # 10. Win Rate Filter
         if s.min_target_winrate > 0 and self._target_stats:
             if self._target_stats.win_rate < s.min_target_winrate:
                 return f"Target win rate too low ({self._target_stats.win_rate:.1f}% < {s.min_target_winrate:.0f}%)"
         
-        # 10. Market Expiry Filter
+        # 11. Market Expiry Filter
         if s.skip_expiring_hours > 0:
             try:
                 market_info = await self.data_fetcher.get_market_info(event.market_id)
@@ -319,6 +335,120 @@ class CopyTradingEngine:
                 pass
         
         return None  # All checks passed
+    
+    def _is_crypto_market(self, market_info) -> bool:
+        """Check if a market is crypto-related using keyword matching."""
+        import re
+        
+        question = (market_info.question or "").lower()
+        slug = getattr(market_info, 'description', '') or ""
+        slug = slug.lower()
+        text = question + " " + slug
+        
+        # Crypto-specific keywords (word boundary matched)
+        crypto_patterns = [
+            r'\bbitcoin\b', r'\bbtc\b', r'\bethereum\b', r'\bsolana\b',
+            r'\bcrypto\b', r'\bcryptocurrency\b', r'\bdefi\b', r'\bnft\b', r'\bblockchain\b',
+            r'\bxrp\b', r'\bdogecoin\b', r'\bdoge\b', r'\bcardano\b',
+            r'\bcoinbase\b', r'\bmemecoin\b', r'\bstablecoin\b', r'\bmicrostrategy\b',
+            r'\blitecoin\b', r'\bltc\b', r'\bshib\b', r'\bpepe\b', r'\bfloki\b',
+            r'\bmegaeth\b', r'\bairdrop\b', r'\bhalving\b', r'\bsatoshi\b',
+            r'\bbinance\b', r'\bpolygon\b', r'\bmatic\b', r'\bavalanche\b',
+            r'\bpolkadot\b', r'\bdot\b', r'\bchainlink\b', r'\blink\b',
+            r'\buniswap\b', r'\bsushiswap\b', r'\bpancakeswap\b',
+            r'\bweb3\b', r'\bl2\b', r'\blayer\s*2\b', r'\brollup\b',
+            r'\bsui\b', r'\baptos\b', r'\bsei\b', r'\bton\b', r'\btoncoin\b',
+            r'\bmining\b.*\bcrypto\b', r'\bcrypto\b.*\bmining\b',
+            r'\btoken\b', r'\bstaking\b', r'\byield\b.*\bfarm\b',
+            r'\bwif\b', r'\btrx\b', r'\btron\b', r'\bbnb\b',
+        ]
+        
+        # Sports exclusion (to avoid false matches like "Avalanche" NHL team)
+        sports_exclude = [
+            r'\bnhl\b', r'\bnba\b', r'\bfifa\b', r'\bnfl\b', r'\bmlb\b',
+            r'\bstanley\s+cup\b', r'\bworld\s+cup\b', r'\bsuper\s+bowl\b',
+            r'\bwin\s+the\s+\d{4}\b', r'\bchampionship\b', r'\bplayoff\b',
+            r'\bpremier\s+league\b', r'\bla\s+liga\b', r'\bserie\s+a\b',
+        ]
+        
+        combined_crypto = '|'.join(crypto_patterns)
+        combined_sports = '|'.join(sports_exclude)
+        
+        is_crypto = bool(re.search(combined_crypto, text))
+        is_sports = bool(re.search(combined_sports, text))
+        
+        return is_crypto and not is_sports
+    
+    async def _auto_redeem_loop(self):
+        """Background loop that auto-redeems winning positions periodically."""
+        interval = self.settings.auto_redeem_minutes * 60  # Convert to seconds
+        
+        while self._is_running:
+            try:
+                await asyncio.sleep(interval)
+                
+                if not self._is_running:
+                    break
+                
+                logger.info("🔄 [AUTO-REDEEM] Checking for redeemable positions...")
+                
+                # Get wallet address
+                wallet = self.client.wallet_address
+                if not wallet:
+                    logger.warning("🔄 [AUTO-REDEEM] No wallet address, skipping")
+                    continue
+                
+                # Fetch positions
+                positions = await self.data_fetcher.get_wallet_positions(wallet)
+                if not positions:
+                    logger.info("🔄 [AUTO-REDEEM] No positions found")
+                    continue
+                
+                # Find resolved winners (price >= 0.95)
+                redeemable = [p for p in positions if p.size > 0 and p.current_price >= 0.95]
+                
+                if not redeemable:
+                    logger.info("🔄 [AUTO-REDEEM] No redeemable positions")
+                    continue
+                
+                total_value = sum(p.size * p.current_price for p in redeemable)
+                logger.info(f"🔄 [AUTO-REDEEM] Found {len(redeemable)} winners (~${total_value:.2f})")
+                
+                # Redeem each unique condition
+                redeemed_conditions = set()
+                success_count = 0
+                
+                for pos in redeemable:
+                    condition_id = pos.market_id
+                    
+                    if condition_id in redeemed_conditions:
+                        continue
+                    
+                    logger.info(f"🔄 Redeeming: {pos.market_question[:40]}... | {pos.size:.2f} shares")
+                    
+                    try:
+                        result = await self.client.redeem_position(condition_id)
+                        if result.get("success"):
+                            tx = result.get("tx_hash", "?")[:16]
+                            logger.info(f"   ✅ Redeemed! TX: {tx}...")
+                            success_count += 1
+                            redeemed_conditions.add(condition_id)
+                        else:
+                            logger.warning(f"   ❌ Failed: {result.get('error', 'unknown')}")
+                    except Exception as e:
+                        logger.warning(f"   ❌ Redeem error: {e}")
+                    
+                    # Small delay between redeems
+                    await asyncio.sleep(2)
+                
+                if success_count > 0:
+                    logger.info(f"🔄 [AUTO-REDEEM] ✅ Redeemed {success_count} positions!")
+                    
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"🔄 [AUTO-REDEEM] Error: {e}")
+                await asyncio.sleep(60)  # Wait 1 min on error before retry
     
     async def _execute_copy(self, event: TradeEvent) -> CopyTradeResult:
         """Execute a copy of the detected trade via MetaMask wallet."""

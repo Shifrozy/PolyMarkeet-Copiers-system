@@ -57,6 +57,7 @@ class MarketInfo:
     prices: List[float] = field(default_factory=list)
     is_resolved: bool = False
     winning_outcome: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
 
 
 @dataclass
