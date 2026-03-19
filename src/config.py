@@ -117,7 +117,7 @@ class Settings(BaseSettings):
         description="Only copy trades in crypto-related markets"
     )
     auto_redeem_minutes: int = Field(
-        default=15,
+        default=5,
         description="Auto-redeem interval in minutes (0 = disabled)"
     )
     

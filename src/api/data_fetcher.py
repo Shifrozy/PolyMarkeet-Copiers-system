@@ -491,7 +491,7 @@ class DataFetcher:
     
     # ─── Market Info ────────────────────────────────────────────────────────
     async def get_market_info(self, market_id: str) -> Optional[MarketInfo]:
-        """Get information about a specific market."""
+        """Get information about a specific market using CLOB API (primary) + Gamma (fallback)."""
         if not market_id:
             return None
         
@@ -500,43 +500,45 @@ class DataFetcher:
             return self._market_cache[market_id]
         
         try:
-            # Primary: Search by conditionId
-            url = f"{self.settings.gamma_api_url}/markets"
-            params = {"conditionId": market_id}
-            
-            async with self.session.get(url, params=params) as response:
+            # PRIMARY: CLOB API - accurate conditionId lookup
+            clob_url = f"https://clob.polymarket.com/markets/{market_id}"
+            async with self.session.get(clob_url) as response:
                 if response.status == 200:
                     data = await response.json()
-                    if data and isinstance(data, list) and len(data) > 0:
-                        m_data = data[0]
-                        prices_raw = m_data.get("outcomePrices", [])
+                    question = data.get("question", "")
+                    if question:
+                        # Extract tokens info for prices
+                        tokens = data.get("tokens", [])
                         prices = []
-                        for p in prices_raw:
+                        for tok in tokens:
                             try:
-                                prices.append(float(p))
+                                prices.append(float(tok.get("price", 0.5)))
                             except:
-                                prices.append(0.0)
+                                prices.append(0.5)
                         
                         market = MarketInfo(
-                            market_id=str(m_data.get("id", market_id)),
-                            question=m_data.get("question", ""),
-                            description=m_data.get("description", ""),
-                            end_date=self._parse_date(m_data.get("endDate")),
-                            outcomes=m_data.get("outcomes", []),
-                            tokens=m_data.get("tokens", []),
-                            volume=float(m_data.get("volume", 0)),
-                            liquidity=float(m_data.get("liquidity", 0)),
-                            active=m_data.get("active", False),
+                            market_id=market_id,
+                            question=question,
+                            description=data.get("description", ""),
+                            end_date=self._parse_date(data.get("end_date_iso") or data.get("endDate")),
+                            outcomes=data.get("outcomes", []),
+                            tokens=tokens,
+                            volume=float(data.get("volume", 0) or 0),
+                            liquidity=float(data.get("liquidity", 0) or 0),
+                            active=data.get("active", False),
                             price=prices[0] if prices else 0.5,
                             prices=prices,
-                            is_resolved=m_data.get("closed", False) or m_data.get("resolved", False),
-                            winning_outcome=str(m_data.get("winningOutcome", ""))
+                            is_resolved=data.get("closed", False),
+                            winning_outcome=str(data.get("winning_outcome", "") or "")
                         )
                         
                         self._market_cache[market_id] = market
                         return market
-
-            # Fallback: Direct market lookup
+        except Exception:
+            pass
+        
+        try:
+            # FALLBACK: Gamma API - direct market lookup
             url = f"{self.settings.gamma_api_url}/markets/{market_id}"
             async with self.session.get(url) as response:
                 if response.status == 200:
